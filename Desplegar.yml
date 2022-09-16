@@ -1,0 +1,156 @@
+---
+
+- name: Despliegue de aplicacion
+  hosts: all
+  become: yes 
+  gather_facts: false
+  
+  tasks:
+
+    - name: Update package sources
+      shell: "curl -sL https://deb.nodesource.com/setup_18.x | bash -"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install packages
+      apt:
+        name:
+          - apache2
+          - nodejs
+          - pipenv
+          - mysql-server
+          - python3-pymysql
+          - libmysqlclient-dev
+        state: latest
+
+    - name: Start MySQL
+      service:
+        name: mysql
+        state: restarted
+
+    - name: Change administrators password
+      mysql_user:
+        name: root
+        password: "{{ db.password }}"
+        host: localhost
+        check_implicit_admin: yes
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        state: present
+
+    - name: Remove anonymous user accounts
+      mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
+        login_user: root
+        login_password: "{{ db.password }}"
+
+    - name: Remove MySQL test database
+      mysql_db:
+        name: test
+        state: absent
+        login_user: root
+        login_password: "{{ db.password }}"
+
+    - name: Create app database
+      mysql_db:
+        name: "{{ db.name }}"
+        state: present
+        login_user: root
+        login_password: "{{ db.password }}"
+
+    - name: Clone repository
+      git:
+        repo: https://github.com/DianaRamirez20/django
+        dest: "{{app.destino}}"
+     
+    - name: Copy local
+      template:
+        src: .env
+        dest: "{{app.destino}}/.env"
+        owner: dianar
+        group: dianar
+        mode: 0664
+        
+    - name: Install framework packages
+      shell: pipenv install
+      args:
+        chdir: "{{ app.destino }}"
+   
+    - name: Prepare database structure 
+      shell: >
+        pipenv run python manage.py makemigrations &&
+        pipenv run python manage.py migrate
+      args:
+        chdir: "{{app.destino}}"
+        
+    - name: Create user
+      shell: pipenv run python manage.py seed_user
+      args:
+        chdir: "{{app.destino}}"
+        
+    - name: Generate static files 
+      shell: pipenv run python manage.py collectstatic --no-input
+      args:
+        chdir: "{{app.destino}}"
+        
+    - name: Run back-end
+      shell: >
+        killall python;
+        nohup pipenv run python manage.py runserver 0.0.0.0:8080 &
+      args:
+        chdir: "{{app.destino}}"
+        
+    - name: Enable apache2
+      apache2_module:
+        name: proxy
+        state: present
+        
+    - name: Enable apache2 proxy
+      apache2_module:
+        name: proxy_http
+        state: present
+        
+    - name: COnfigure apache
+      template:
+        src: apache.conf
+        dest: /etc/apache2/sites-available/000-default.conf
+        owner: dianar
+        group: dianar
+        mode: 0664
+      notify: Restart apache 
+      
+    - name: http traffic
+      ufw:
+        rule: allow
+        port: 80
+        proto: tcp
+        
+    - name: Clone front-end
+      git:
+        repo: https://github.com/DianaRamirez20/contador
+        dest: "{{web.proyecto}}"
+        
+    - name: Install front-end
+      npm:
+        production: yes
+        path: "{{web.proyecto}}"
+        
+    - name: Build project
+      shell: npm run build
+      args:
+        chdir: "{{web.proyecto}}"
+        
+    - name: Copy web files
+      shell: >
+        mkdir -p {{web.destino}} &&
+        cp -r {{web.proyecto}}/build/* {{web.destino}}/
+      
+  handlers: 
+  
+    - name: Restart apache 
+      service: 
+        name: apache2
+        state: restarted

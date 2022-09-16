@@ -1,0 +1,13 @@
+app:
+  destino: /var/www/html/app.dramirez.com
+
+web:
+  proyecto: /home/ubuntu/react-counter-web
+  destino: /var/www/html/web.dramirez.com
+
+db:
+  name: app
+  user: root
+  password: password
+  host: localhost
+  port: 6603
